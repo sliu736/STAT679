@@ -1,0 +1,275 @@
+---
+title: "Problem Set 4"
+author: "Suhui Liu"
+output: rmdformats::readthedown
+css: custom.css
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = FALSE, fig.align = "center")
+```
+
+
+
+```{r include=FALSE}
+library(tidygraph)
+library(topicmodels)
+library(tidyverse)
+library(ggraph)
+library(sf)
+library(tidymodels)
+library(tmap)
+library(ggalluvial)
+library(tidytext)
+library(ggHoriPlot)
+my_theme <- theme_bw() +
+  theme(
+    panel.background = element_rect(fill = "#f7f7f7"),
+    panel.grid.minor = element_blank(),
+    axis.ticks = element_blank(),
+    plot.background = element_rect(fill = "transparent", colour = NA)
+  )
+theme_set(my_theme)
+```
+
+# Coding
+
+## Political Book Recommendations
+
+### a. The code below reads in the edges and nodes associated with the network. The edges dataset only contains IDs of co-recommended books, while the nodes data includes attributes associated with each book. Build a tbl_graph object to store the graph.
+
+```{r}
+edges <- read_csv("https://uwmadison.box.com/shared/static/54i59bfc5jhymnn3hsw8fyolujesalut.csv", col_types = "cci")
+nodes <- read_csv("https://uwmadison.box.com/shared/static/u2x392i79jycubo5rhzryxjsvd1jjrdy.csv", col_types = "ccc")
+
+G <- tbl_graph(nodes, edges, directed = FALSE) 
+G
+```
+
+
+### b. Use the result from part (a) to visualize the network as a node-link diagram. Include the book’s title in the node label, and shade in the node according to political ideology.
+
+
+```{r}
+ggraph(G, "kk") +
+     geom_node_point() +
+     geom_edge_link(colour = "#d3d3d3", width = 0.5, alpha = 0.6) +
+     geom_node_text(aes(label = Label, size = political_ideology, col = political_ideology)) +
+     scale_size_discrete(range = c(2, 2, 2)) +
+     theme_void() +
+     theme(legend.position = "bottom")
+```
+
+
+### c. Create the analogous adjacency matrix visualization. Provide examples of visual queries that are easy to answer using one encoding but not the other (i.e., what is easy to see in the node-link view vs. what is easy to see in the adjacency matrix).
+
+```{r}
+ggraph(G, layout = "matrix") +
+  geom_edge_tile(mirror = TRUE) +
+  coord_fixed() +
+  geom_node_text(aes(label = Label, col = political_ideology), x = -1, nudge_y = 0.5, size = 0.5) +
+  geom_node_text(aes(label = Label, col = political_ideology), y = -1, nudge_x = -0.5, size = 0.5, angle = 90) +
+  theme_void() +
+  theme(legend.position = "none")
+
+```
+
+- Adjacency matrices: Can scale to large and dense networks. It’s possible to perceive structure even when the squares are quite small, and there is no risk of edges overlapping with one another. Example: large number of edges per node
+
+
+- Node-link diagrams: Can make sense of the local topology around a node. Example: Finding the friends of friends.
+
+
+
+## Topics in Pride and Prejudice 
+
+### a. Create a Document-Term Matrix containing word counts from across the same paragraphs. That is, the ith row of dtm should correspond to the ith row of paragraph. Make sure to remove all stopwords.
+
+
+```{r}
+paragraphs <- read_csv("https://uwmadison.box.com/shared/static/pz1lz301ufhbedzsj9iioee77r95xz4v.csv")
+paragraphs_dtm <- paragraphs %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words) %>%
+  count(paragraph, word) %>%
+  cast_dtm(paragraph, word, n)
+```
+
+### b. Fit an LDA model to dtm using 6 topics. Set the seed by using the argument control = list(seed = 479) to remove any randomness in the result.
+
+```{r}
+fit <- LDA(paragraphs_dtm, k = 6, control = list(seed = 479))
+```
+
+### c. Visualize the top 30 words within each of the fitted topics. Specifically, create a faceted bar chart where the lengths of the bars correspond to word probabilities and the facets correspond to topics. Reorder the bars so that each topic’s top words are displayed in order of decreasing probability.
+
+```{r}
+topics <- tidy(fit, matrix = "beta")
+
+topwords <- topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 30) %>%
+  mutate(order = reorder_within(term, beta, topic))
+
+ggplot(topwords, aes(beta, order, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_fill_brewer(palette = "Set2") +
+  theme(axis.text=element_text(size=5))+
+  scale_y_reordered()
+```
+
+### d. Find the paragraph that is the purest representative of Topic 2. That is, if γik denotes the weight of topic k in paragraph i, then print out paragraph i∗ where i∗ = arg maxi γi2. Verify that the at least a few of the words with high probability for this topic appear. Only copy the first sentence into your solution.
+
+```{r}
+topic2 <- order(fit@gamma[,2],decreasing = TRUE)
+fit@documents[topic2][1]
+paragraphs[347,]$text %>% substring(1,119)
+```
+
+
+## Food Nutrients 
+
+### a. Define a tidymodels recipe that normalizes all nutrient features and specifies that PCA should be performed.
+
+```{r}
+nutrients <- read_csv("https://uwmadison.box.com/shared/static/nmgouzobq5367aex45pnbzgkhm7sur63.csv")
+nutrients_pca <- recipe(~ ., data = nutrients) %>%
+  update_role(id:group_lumped,new_role = "key") %>%
+  step_normalize(all_predictors()) %>%
+  step_pca(all_predictors()) %>%
+  prep()
+
+pca_score <- juice(nutrients_pca)
+```
+
+### b. Visualize the top 6 principal components. What types of food do you expect to have low or high values for PC1 or PC2?
+
+```{r}
+tidy(nutrients_pca, 2) %>%
+  filter(component %in% str_c("PC", 1:6)) %>%
+  ggplot() +
+  geom_col(aes(value, terms)) +
+  facet_wrap(component ~ .) +
+  theme(axis.text.y = element_text(size = 7))
+```
+Vegetables might have high PC1, while bread might have high PC2.
+
+
+### c. Compute the average value of PC2 within each category of the group column. Give the names of the groups sorted by this average.
+
+```{r}
+scores <- bake(nutrients_pca, nutrients)
+avg <- scores %>%
+  group_by(group) %>%
+  summarise(mean_PC2 = mean(PC2)) %>%
+  arrange(desc(mean_PC2)) 
+avg %>% select(group)
+```
+
+### d. Visualize the scores of each food item with respect to the first two principal components. Facet the visualization according to the group column, and sort the facets according to the results of part (c). How does the result compare with your guess from part (b)?
+
+```{r}
+scores %>%
+  group_by(group) %>%
+  mutate(mean_PC2 = mean(PC2)) %>%
+  arrange(desc(mean_PC2)) %>%
+  ggplot() +
+  geom_point(aes(PC1, PC2)) + 
+  facet_wrap(group~.)
+```
+Aligned with my assumption.
+
+## Interactive Phylogeny
+
+### a, b
+
+<iframe src="https://sliu736.github.io/STAT679/PS4/phylogeny.html" width=800 height=500 data-external="1"></iframe>
+
+### c. Propose, but do not implement, an extend version of part (b) that is linked with an additional table or visualization. How would the second graphic be updated in response to user interactions? What additional queries become possible in your proposed visualization?
+
+The additional table will display all the detailed information for the selected leaf node(when user hover on the graph), including all the parent nodes, the name and date information as well. 
+Knowing the detailed information of a specific leaf node.
+
+# Discussion
+
+## Hierarchical Edge Bundling
+
+### a. Use console.log() to inspect the root object. Describe its structure.
+
+It is a `Zh` object. Showing as a following structure:
+- data object:
+  - name attribute: `flare`
+  - children attribute: an Array of 10 containing its child nodes
+    - each element contains name and children array
+- height attribute
+- depth attribute
+- parent attribute
+- children: array of 10 indicating the child nodes' parent node, where all of them are `Zh`
+- x
+- y
+
+### b. What does this line do? Provide one example of an edge in the original visualization (e.g., for example xor <--> or, though this is not a correct answer) where you believe i.path(o) contains more than two elements, and explain your reasoning. You may find it useful to console.log() the result from i.path(o).
+```{js}
+.attr("d", ([i, o]) => line(i.path(o)))
+```
+
+Create lines between nodes. I was assuming that it is used because the nodes are not simply one-to-one relation, while there might be several nodes having the same parent. For example, \ NodeSprite <--> DataSprite contains themselves, and their common parent `Data`.
+
+
+### c. Imagine that you are working for a biotechnology firm that is interested in visualizing a protein network. You have data on the co-occurrence frequency for all pairs of proteins (high-co-occurrence can be interpreted as the proteins lying on a shared regulatory pathway). What, if any, additional information would you need before you could implement a hierarchical edge bundling visualization of the network? Explain your reasoning.
+
+Similarly, we would need their common parent node information.
+
+
+## UMAP Image Collection
+
+### a. This visualization supports panning and zooming. Which lines of code support this?
+
+There are 2 zooms functions to focus on. 
+
+```{js}
+zoom = d3.zoom()
+  .scaleExtent([1, 50])
+  .translateExtent([[0,0],[width,height]])
+  .clickDistance(2)
+  .on("zoom", zoomed);
+
+function zoomed() {
+  const {transform} = d3.event;
+  container.scale.set(transform.k)
+  container.position.x = transform.x
+  container.position.y = transform.y
+  renderer.render(container)
+}
+```
+
+While this code is used to reset.
+
+```{js}
+function reset() {
+  const m = d3.mouse(this)
+  const t = d3.zoomTransform(this)
+  const p = t.invert(m)
+  
+  if(t.k > 4){
+    d3.select(this).transition().duration(400).call(
+      zoom.transform,
+      d3.zoomIdentity
+        .translate(0,0)
+        .scale(1)
+    );
+  } else {
+    d3.select(this).transition().duration(400).call(zoom.scaleTo, 8, p)
+      //.on("end", () => mousemove());
+  }
+}
+```
+
+### b. This visualization applies a “fisheye” lens in addition to more standard pan and zoom. Why do you think this was included? Do you think it is effective? Why or why not?
+
+The "fisheye" makes the photos shown in a zoomed way, where the center of the circle zoomed more than the edge, just like eyes. It is effective because it provides a dynamic view to see a bunch of photos, being able to witness the similarities within the circle between a bunch of photos while not losing focus of the one selected. 
+
+
