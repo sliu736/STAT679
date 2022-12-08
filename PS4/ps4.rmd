@@ -1,0 +1,97 @@
+---
+title: "Problem Set 4"
+author: "Suhui Liu"
+output: rmdformats::readthedown
+css: custom.css
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = FALSE, fig.align = "center")
+```
+
+
+
+```{r}
+library(tidygraph)
+library(tidyverse)
+library(ggraph)
+library(sf)
+library(tmap)
+library(ggalluvial)
+library(ggHoriPlot)
+my_theme <- theme_bw() +
+  theme(
+    panel.background = element_rect(fill = "#f7f7f7"),
+    panel.grid.minor = element_blank(),
+    axis.ticks = element_blank(),
+    plot.background = element_rect(fill = "transparent", colour = NA)
+  )
+theme_set(my_theme)
+```
+
+
+## Political Book Recommendations
+
+**a. The code below reads in the edges and nodes associated with the network. The edges dataset only contains IDs of co-recommended books, while the nodes data includes attributes associated with each book. Build a tbl_graph object to store the graph.**
+
+```{r}
+edges <- read_csv("https://uwmadison.box.com/shared/static/54i59bfc5jhymnn3hsw8fyolujesalut.csv", col_types = "cci")
+nodes <- read_csv("https://uwmadison.box.com/shared/static/u2x392i79jycubo5rhzryxjsvd1jjrdy.csv", col_types = "ccc")
+
+G <- tbl_graph(nodes, edges, directed = FALSE) %>%
+  mutate(group = fct_lump_n(political_ideology,3))
+G
+```
+
+
+**b. Use the result from part (a) to visualize the network as a node-link diagram. Include the book’s title in the node label, and shade in the node according to political ideology.**
+
+
+```{r}
+ggraph(G, "kk") +
+     geom_edge_link(colour = "#d3d3d3", width = 0.5, alpha = 0.6) +
+     geom_node_text(aes(label = Label, size = political_ideology, col = political_ideology)) +
+     scale_color_manual(values = c("#BF4545", "#225C73", "#FFD100")) +
+     scale_size_discrete(range = c(2, 2, 2)) +
+     theme_void() +
+     theme(legend.position = "right")
+```
+
+
+**c. Create the analogous adjacency matrix visualization. Provide examples of visual queries that are easy to answer using one encoding but not the other (i.e., what is easy to see in the node-link view vs. what is easy to see in the adjacency matrix).**
+
+```{r}
+ggraph(G, layout = "matrix") +
+  geom_edge_tile(mirror = TRUE) +
+  coord_fixed() +
+  geom_node_text(aes(label = Label, col = political_ideology), x = -1, nudge_y = 0.5, size = 0.5) +
+  geom_node_text(aes(label = Label, col = political_ideology), y = -1, nudge_x = -0.5, size = 0.5, angle = 90) +
+  theme_void() +
+  theme(legend.position = "none")
+
+```
+
+If given specific two nodes, it's easy to see whether these two nodes are linked or not in the adjacency matrix. For example, if we want to know whether "1000 Years for Revenge" and "Bush vs. the Beltway" are linked or not, it's better to check on adjacency matrix graph.
+
+If we want to grab a general idea of how the books are linked with each other, graph in (b) gives us a more intuitive idea of the dataset. For example, if we are looking for the links of what "1000 Years for Revenge” is linking (friends of friends), it's better to check on graph in (b).
+
+## Topics in Pride and Prejudice 
+
+## Food Nutrients 
+
+## Interactive Phylogeny
+
+
+# Discussion
+
+## Hierarchical Edge Bundling
+
+## UMAP Image Collection
+
+
+
+
+
+
